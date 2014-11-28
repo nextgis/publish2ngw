@@ -149,6 +149,10 @@ class PublishDialog(QDialog, Ui_Dialog):
                 element = layerNodes.at(i).toElement()
                 layers[element.firstChildElement('id').text()] = element
 
+        self.progressBar.setRange(0, len(layers))
+        self.progressBar.setValue(0)
+        self.progressBar.setFormat('%v/%m')
+
         projectTitle = ''
         root = doc.documentElement()
         e = root.firstChildElement('title')
@@ -218,8 +222,15 @@ class PublishDialog(QDialog, Ui_Dialog):
                 if layer is None:
                     continue
 
+                self.progressBar.setValue(self.progressBar.value() + 1)
                 QgsMessageLog.logMessage('Publishing %s' % layer.name(), 'Publish2NGW', QgsMessageLog.INFO)
                 QApplication.processEvents()
+
+                if not absolutePath.startswith('dbname'):
+                    if not os.path.exists(absolutePath):
+                        time.sleep(10)
+                        QgsMessageLog.logMessage('Layer not found', 'Publish2NGW', QgsMessageLog.INFO)
+                        continue
 
                 finished = False
                 while not finished:
@@ -233,7 +244,7 @@ class PublishDialog(QDialog, Ui_Dialog):
                             continue
                         else:
                             QgsMessageLog.logMessage('Canceled by user', 'Publish2NGW', QgsMessageLog.INFO)
-                            ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                            ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                             if ret == QMessageBox.Yes:
                                 url = self.url + '/resource/0/child/' + groupId
                                 requests.delete(url, auth=(self.user, self.password))
@@ -242,7 +253,17 @@ class PublishDialog(QDialog, Ui_Dialog):
 
                 if resLayer is None:
                     QgsMessageLog.logMessage('Layer upload failed. Exiting', 'Publish2NGW', QgsMessageLog.INFO)
-                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if ret == QMessageBox.Yes:
+                        url = self.url + '/resource/0/child/' + str(groupId)
+                        requests.delete(url, auth=(self.user, self.password))
+                    self.canceled()
+                    return
+
+                if resLayer.status_code / 100 != 2:
+                    msg = json.dumps(resLayer.json()['message'], ensure_ascii=False).strip('"')
+                    QgsMessageLog.logMessage('NGW error: %s' % msg, 'Publish2NGW', QgsMessageLog.INFO)
+                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                     if ret == QMessageBox.Yes:
                         url = self.url + '/resource/0/child/' + str(groupId)
                         requests.delete(url, auth=(self.user, self.password))
@@ -263,12 +284,22 @@ class PublishDialog(QDialog, Ui_Dialog):
                             continue
                         else:
                             QgsMessageLog.logMessage('Canceled by user', 'Publish2NGW', QgsMessageLog.INFO)
-                            ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                            ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                             if ret == QMessageBox.Yes:
                                 url = self.url + '/resource/0/child/' + groupId
                                 requests.delete(url, auth=(self.user, self.password))
                             self.canceled()
                             return
+
+                if not isinstance(resStyle, dict) and resStyle.status_code / 100 != 2:
+                    msg = json.dumps(resStyle.json()['message'], ensure_ascii=False).strip('"')
+                    QgsMessageLog.logMessage('NGW error: %s' % msg, 'Publish2NGW', QgsMessageLog.INFO)
+                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if ret == QMessageBox.Yes:
+                        url = self.url + '/resource/0/child/' + str(groupId)
+                        requests.delete(url, auth=(self.user, self.password))
+                    self.canceled()
+                    return
 
                 self.updateLayerData(projectTree, layerId, resStyle['id'])
 
@@ -315,7 +346,7 @@ class PublishDialog(QDialog, Ui_Dialog):
                         continue
                     else:
                         QgsMessageLog.logMessage('Canceled by user', 'Publish2NGW', QgsMessageLog.INFO)
-                        ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                        ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                         if ret == QMessageBox.Yes:
                             url = self.url + '/resource/0/child/' + groupId
                             requests.delete(url, auth=(self.user, self.password))
@@ -323,13 +354,13 @@ class PublishDialog(QDialog, Ui_Dialog):
                         return
                 except requests.exceptions.RequestException, e:
                     QgsMessageLog.logMessage(e.message, 'Publish2NGW', QgsMessageLog.INFO)
-                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    ret = QMessageBox.question(self, self.tr('Cleanup'), self.tr('Publishing error. Drop resource group?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                     if ret == QMessageBox.Yes:
                         url = self.url + '/resource/0/child/' + groupId
                         requests.delete(url, auth=(self.user, self.password))
                     self.canceled()
                     return
-        self.published(m)
+            self.published(m)
 
     def published(self, wmap):
         ret = QMessageBox.question(self, self.tr('Finished'), self.tr('Publishing completed.\n\nOpen map?'), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -337,11 +368,17 @@ class PublishDialog(QDialog, Ui_Dialog):
             QDesktopServices.openUrl(QUrl(self.url + '/resource/' + str(wmap.json()['id']) + '/display'))
         self.btnOk.setEnabled(True)
         self.btnClose.setEnabled(True)
+        self.progressBar.setRange(0, 1)
+        self.progressBar.setValue(0)
+        self.progressBar.setFormat('')
 
     def canceled(self):
         QMessageBox.warning(self, self.tr('Finished'), self.tr('Publishing failed. See log for more details'))
         self.btnOk.setEnabled(True)
         self.btnClose.setEnabled(True)
+        self.progressBar.setRange(0, 1)
+        self.progressBar.setValue(0)
+        self.progressBar.setFormat('')
 
     def addLayer(self, parent, name, layer):
         layerName = layer.name()

@@ -2,7 +2,7 @@
 name=Publish2NGW
 description=Publish QGIS projects to NextGIS Web
 category=Web
-version=0.1.0
+version=0.2.0
 qgisMinimumVersion=2.0
 
 icon=icons/publish2ngw.svg
